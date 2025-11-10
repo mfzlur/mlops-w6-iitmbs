@@ -1,0 +1,159 @@
+name: Build, Deploy, and Stress Test Iris API
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: mlops-coursework # Change this
+  REPO_NAME: mlops-w6-repo # Change this
+  CLUSTER_NAME: your-cluster-name # Change this
+  CLUSTER_ZONE: us-central1-c # Change this
+  IMAGE_NAME: iris-api
+
+jobs:
+  build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: 'google-github-actions/auth@v2'
+      with:
+        workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL/providers/YOUR_PROVIDER'
+        service_account: 'YOUR_SERVICE_ACCOUNT_EMAIL'
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker us-central1-docker.pkg.dev
+
+    - name: Build and Push Docker Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: |
+          us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:latest
+
+  deploy:
+    name: Deploy to GKE
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: 'google-github-actions/auth@v2'
+      with:
+        workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL/providers/YOUR_PROVIDER'
+        service_account: 'YOUR_SERVICE_ACCOUNT_EMAIL'
+
+    - name: Get GKE credentials
+      uses: 'google-github-actions/get-gke-credentials@v2'
+      with:
+        cluster_name: ${{ env.CLUSTER_NAME }}
+        location: ${{ env.CLUSTER_ZONE }}
+
+    - name: Update Image Tag in Deployment
+      run: |
+        sed -i "s|image: us-central1-docker.pkg.dev/mlops-coursework/mlops-w6-repo/iris-api:latest|image: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" deployment.yaml
+
+    - name: Deploy Kubernetes Manifests
+      run: |
+        kubectl apply -f deployment.yaml
+
+  stress-test:
+    name: Stress Test Application
+    runs-on: ubuntu-latest
+    needs: deploy # Runs after the deploy job is successful
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: 'google-github-actions/auth@v2'
+      with:
+        workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL/providers/YOUR_PROVIDER'
+        service_account: 'YOUR_SERVICE_ACCOUNT_EMAIL'
+
+    - name: Get GKE credentials
+      uses: 'google-github-actions/get-gke-credentials@v2'
+      with:
+        cluster_name: ${{ env.CLUSTER_NAME }}
+        location: ${{ env.CLUSTER_ZONE }}
+
+    - name: Install wrk
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wrk
+
+    - name: Get Service External IP
+      run: |
+        echo "--- Waiting for external IP..."
+        SERVICE_NAME="iris-api-service" # <-- This matches your service name
+        
+        IP=""
+        while [ -z "$IP" ]; do
+          IP=$(kubectl get service $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          [ -z "$IP" ] && echo "Waiting for IP..." && sleep 10
+        done
+        
+        echo "SERVICE_IP=$IP" >> $GITHUB_ENV
+        echo "--- Service IP found: $IP"
+
+    - name: TEST 1  AUTOSCALING DEMO (1000 connections)
+      run: |
+        echo "--- Test 1: Running >1000 connections with max 3 pods ---"
+        echo "--- HPA status before test: ---"
+        kubectl get hpa iris-api-hpa
+        
+        # We use 1200 connections to satisfy the >1000 requirement
+        wrk -t4 -c1200 -d30s -s ./scripts/post.lua http://${{ env.SERVICE_IP }}
+        
+        echo "--- Test 1 finished. Waiting 90s for HPA to react... ---"
+        sleep 90 
+        
+        echo "--- HPA status after test: ---"
+        kubectl get hpa iris-api-hpa
+        echo "--- Pod status (should be scaling/scaled to 3): ---"
+        kubectl get pods -l app=iris-api -o wide
+        
+    - name: TEST 2 BOTTLENECK DEMO (2000 connections)
+      run: |
+        echo "---  Test 2: Restricting to 1 pod, running 2000 connections ---"
+        # Patch the HPA to restrict scaling to 1 pod
+        kubectl patch hpa iris-api-hpa --patch '{"spec":{"maxReplicas":1}}'
+        
+        echo "--- Waiting 60s for pods to scale down... ---"
+        sleep 60
+        
+        echo "--- Pod status before test (should be 1): ---"
+        kubectl get pods -l app=iris-api
+        
+        # This test will likely produce many errors, proving the bottleneck
+        wrk -t4 -c2000 -d30s -s ./scripts/post.lua http://${{ env.SERVICE_IP }}
+        
+        echo "--- Test 2 finished. ---"
+        echo "--- HPA status (should show 1/1 replicas, but high target %): ---"
+        kubectl get hpa iris-api-hpa
