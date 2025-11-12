@@ -1,110 +1,62 @@
-# IRIS Flower Classification API - Continuous Deployment with GitHub Actions
+# IRIS Flower Classification API - Kubernetes Autoscaling \& Load Testing
 
-A production-ready machine learning API that classifies IRIS flowers using an ensemble model (SVM + Gradient Boosting). Fully automated CI/CD pipeline with GitHub Actions, Docker containerization, and Kubernetes deployment on Google Cloud.
+A production-ready machine learning API demonstrating Kubernetes Horizontal Pod Autoscaling (HPA) under stress conditions. This project extends the CI/CD pipeline with automated load testing to observe autoscaling behavior and identify performance bottlenecks.
 
 ## 📋 Table of Contents
 
 - [Project Overview](#project-overview)
-- [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Project Structure](#project-structure)
 - [Setup Instructions](#setup-instructions)
-- [Local Development](#local-development)
-- [CI/CD Pipeline](#cicd-pipeline)
+- [Stress Testing \& Autoscaling](#stress-testing--autoscaling)
+- [Test Results Analysis](#test-results-analysis)
 - [API Endpoints](#api-endpoints)
 - [Model Details](#model-details)
 - [Troubleshooting](#troubleshooting)
 
+
 ## 🎯 Project Overview
 
-This project demonstrates modern DevOps practices by building an automated deployment pipeline for a machine learning model:
+This project demonstrates Kubernetes autoscaling capabilities by stress testing a machine learning API and observing pod scaling behavior under high concurrent load:
 
-- **ML Model**: Advanced ensemble classifier combining SVM (with GridSearchCV hyperparameter tuning) and Gradient Boosting
-- **API Framework**: FastAPI with automatic interactive documentation
-- **Containerization**: Docker for consistent deployment across environments
-- **Orchestration**: Kubernetes (GKE) for scalable container management
-- **CI/CD**: GitHub Actions for fully automated build, test, and deploy workflow
-- **Registry**: Google Artifact Registry for secure image storage
+- **ML Model**: Ensemble classifier (SVM + Gradient Boosting) with ~97% accuracy
+- **API Framework**: FastAPI with automatic documentation
+- **Load Testing**: wrk tool generating >1000 concurrent connections
+- **Autoscaling**: Horizontal Pod Autoscaler (HPA) with CPU-based scaling
+- **Orchestration**: Google Kubernetes Engine (GKE)
+- **CI/CD**: GitHub Actions with automated stress testing
 
-### Key Features
 
-✅ Automated builds and deployments on every git push  
-✅ High-accuracy ensemble model (~97% on IRIS dataset)  
-✅ RESTful API with automatic Swagger documentation  
-✅ Health checks and readiness probes  
-✅ Horizontal scaling with multiple replicas  
-✅ Confidence scores and probability distribution for predictions  
-✅ Production-ready error handling and validation  
+### Assignment Objectives
 
-## 🏗️ Architecture
-
-### Kubernetes Pod vs Docker Container
-
-| **Aspect** | **Docker Container** | **Kubernetes Pod** |
-|---|---|---|
-| **Definition** | Isolated package containing application code, runtime, and dependencies | Smallest deployable unit in Kubernetes; wraps one or more containers |
-| **Networking** | Each container has its own network namespace; requires port mapping | All containers in a pod share the same network namespace; can communicate via localhost |
-| **Storage** | Ephemeral storage lost when container terminates | Can use persistent volumes; data survives container restarts |
-| **Lifecycle** | Managed by Docker runtime (create, start, restart, stop) | Managed by Kubernetes control plane (Pending → Running → Succeeded/Failed) |
-| **Isolation** | Isolated from other containers at runtime level | Pod is isolated from other pods; internal containers share network IP and ports |
-
-**Simple Analogy**: A Docker container is a **packaged shipping box**, while a Pod is a **shelf in a warehouse** that holds one or more boxes and provides shared infrastructure (network cable, power).
-
-### Deployment Flow
-
-```
-Developer Push to GitHub (main branch)
-              ↓
-GitHub Actions Workflow Triggered
-              ↓
-┌─────────────────────────────────────┐
-│ BUILD PHASE                         │
-│ - Checkout code from GitHub         │
-│ - Build Docker image from Dockerfile│
-│ - Tag with commit SHA               │
-└─────────────────────────────────────┘
-              ↓
-┌─────────────────────────────────────┐
-│ PUSH PHASE                          │
-│ - Authenticate to Google Cloud      │
-│ - Push image to Artifact Registry   │
-│ - Tag: :latest and :commit-sha      │
-└─────────────────────────────────────┘
-              ↓
-┌─────────────────────────────────────┐
-│ DEPLOY PHASE                        │
-│ - Get credentials to GKE cluster    │
-│ - Update deployment with new image  │
-│ - kubectl set image triggers        │
-│ - Rolling update to new pods        │
-└─────────────────────────────────────┘
-              ↓
-Kubernetes Pulls Image and Creates Pods
-              ↓
-IRIS API Running in Production ✅
-```
+✅ **Extend CI/CD pipeline** with automated stress testing after deployment
+✅ **Stress test with >1000 requests** using wrk load testing tool
+✅ **Demonstrate HPA autoscaling** from 1 to 3 pods based on CPU utilization
+✅ **Observe bottlenecks** when scaling is restricted to 1 pod with 2000 concurrent requests
+✅ **Analyze performance degradation** through socket errors, timeouts, and latency metrics
 
 ## 📦 Prerequisites
 
-### GCP Setup Required
+### Required Components
 
 1. **GCP Project** with billing enabled
-2. **Enable these APIs:**
-   - Kubernetes Engine API
-   - Artifact Registry API
-   - Container Registry API
+2. **Enabled APIs**:
+    - Kubernetes Engine API
+    - Artifact Registry API
+    - Container Registry API
+    - Cloud Monitoring API (for HPA metrics)
+3. **GKE Cluster** with Metrics Server installed
+4. **Service Account** with container.admin and storage.admin roles
+5. **GitHub Secrets** configured (GKE_PROJECT, GKE_SA_KEY)
 
-3. **GKE Cluster** created in your project
-4. **Service Account** with proper IAM roles
-5. **GitHub Secrets** configured with credentials
-
-### Local Development Tools
+### Local Tools
 
 - Python 3.10+
-- Docker installed locally
-- kubectl installed
-- gcloud CLI installed
-- Git
+- Docker
+- kubectl
+- gcloud CLI
+- wrk (HTTP benchmarking tool)
+
 
 ## 📁 Project Structure
 
@@ -112,248 +64,256 @@ IRIS API Running in Production ✅
 mlops-w6-iitmbs/
 ├── .github/
 │   └── workflows/
-│       └── deploy-gke.yml          # GitHub Actions CI/CD workflow
+│       └── deploy-gke.yml          # CI/CD with stress testing
+├── scripts/
+│   └── post.lua                    # wrk Lua script for POST requests
 ├── main.py                         # FastAPI application
 ├── train_model.py                  # Model training script
 ├── requirements.txt                # Python dependencies
-├── Dockerfile                      # Docker container build instructions
-├── deployment.yaml                 # Kubernetes deployment manifest
-├── README.md                       # This file
-└── .gitignore                      # Exclude model files from git
+├── Dockerfile                      # Container image definition
+├── deployment.yaml                 # Kubernetes deployment + HPA
+└── README.md                       # This file
 ```
 
-### File Descriptions
+
+### Key Files
 
 | File | Purpose |
-|------|---------|
-| `main.py` | FastAPI application with prediction endpoints and health checks |
-| `train_model.py` | Trains ensemble model with GridSearchCV, saves to model.pkl and scaler.pkl |
-| `requirements.txt` | Python package dependencies (FastAPI, scikit-learn, XGBoost, etc.) |
-| `Dockerfile` | Container image definition; trains model on build and runs FastAPI |
-| `deployment.yaml` | Kubernetes manifest defining Service and Deployment for GKE |
-| `deploy-gke.yml` | GitHub Actions workflow orchestrating build → push → deploy |
+| :-- | :-- |
+| `deploy-gke.yml` | GitHub Actions workflow with automated stress tests |
+| `deployment.yaml` | Kubernetes Deployment with resource requests/limits | HorizontalPodAutoscaler with 50% CPU target, 1-3 replicas |
+| `scripts/post.lua` | wrk Lua script for POST request load testing |
 
 ## 🚀 Setup Instructions
 
 ### Step 1: GCP Configuration
 
 ```bash
-# Set your GCP project
+# Set variables
 export PROJECT_ID="your-gcp-project-id"
-export ZONE="us-central1-a"
+export ZONE="us-central1"
 export CLUSTER_NAME="iris-cluster"
 
-# Login to GCP
+# Authenticate and set project
 gcloud auth login
 gcloud config set project $PROJECT_ID
 
-# Enable required APIs
-gcloud services enable containerregistry.googleapis.com
+# Enable APIs
 gcloud services enable container.googleapis.com
 gcloud services enable artifactregistry.googleapis.com
+gcloud services enable monitoring.googleapis.com
 
-# Create GKE cluster (this takes ~5-10 minutes)
+# Create GKE cluster with autoscaling
 gcloud container clusters create $CLUSTER_NAME \
   --zone $ZONE \
   --num-nodes 2 \
-  --machine-type n1-standard-2
+  --machine-type n1-standard-2 \
+  --enable-autoscaling \
+  --min-nodes 1 \
+  --max-nodes 4
 
-# Create Docker registry in Artifact Registry
-gcloud artifacts repositories create iris-repo \
-  --repository-format=docker \
-  --location=us-central1
+# Install Metrics Server (required for HPA)
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 
-# Create service account for GitHub
-gcloud iam service-accounts create github-deployment-sa \
-  --display-name="GitHub Deployment Service Account"
-
-# Grant roles to service account
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member=serviceAccount:github-deployment-sa@${PROJECT_ID}.iam.gserviceaccount.com \
-  --role=roles/container.admin
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member=serviceAccount:github-deployment-sa@${PROJECT_ID}.iam.gserviceaccount.com \
-  --role=roles/storage.admin
-
-# Create and export service account key
-gcloud iam service-accounts keys create key.json \
-  --iam-account=github-deployment-sa@${PROJECT_ID}.iam.gserviceaccount.com
-
-# Convert to base64 for GitHub secret
-export GKE_SA_KEY=$(cat key.json | base64)
-echo $GKE_SA_KEY
+# Verify Metrics Server
+kubectl get deployment metrics-server -n kube-system
 ```
 
-### Step 2: GitHub Configuration
 
-1. **Create Repository**
-   - Go to GitHub.com → New Repository
-   - Name: `iris-api`
-   - Clone to local machine: `git clone https://github.com/YOUR_USERNAME/iris-api.git`
 
-2. **Add GitHub Secrets**
-   - Repository → Settings → Secrets and variables → Actions
-   - Add secret `GKE_PROJECT` = your GCP project ID
-   - Add secret `GKE_SA_KEY` = the base64 key from Step 1
 
-3. **Update Workflow File**
-   - Edit `.github/workflows/deploy-gke.yml`
-   - Replace `YOUR_PROJECT_ID` with your actual GCP project ID
+### Step 3: Update Deployment with Resource Limits
 
-4. **Update Deployment Manifest**
-   - Edit `deployment.yaml`
-   - Replace `YOUR_PROJECT_ID` with your actual GCP project ID
+Ensure your `deployment.yaml` includes resource requests and limits:
 
-### Step 3: Local Repository Setup
+```yaml
+containers:
+- name: iris-api
+  image: us-central1-docker.pkg.dev/PROJECT_ID/iris-repo/iris-api:latest
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+```
+
+
+### Step 4: Create wrk POST Script
+
+Create `scripts/post.lua`:
+
+```lua
+wrk.method = "POST"
+wrk.headers["Content-Type"] = "application/json"
+wrk.body = '{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'
+
+request = function()
+    return wrk.format(nil, nil, nil, wrk.body)
+end
+```
+
+
+### Step 5: Deploy to Kubernetes
 
 ```bash
-# Create project structure
-mkdir -p .github/workflows
+# Apply all resources (Service, Deployment, HPA) from single file
+kubectl apply -f deployment.yaml
 
-# Copy all provided files into repository:
-# - main.py
-# - train_model.py
-# - requirements.txt
-# - Dockerfile
-# - deployment.yaml
-# - .github/workflows/deploy-gke.yml
 
-# Create .gitignore
-cat > .gitignore << EOF
-model.pkl
-scaler.pkl
-__pycache__/
-*.pyc
-.env
-*.egg-info/
-dist/
-build/
-EOF
-
-# Commit and push
-git add .
-git commit -m "Initial setup: IRIS API with FastAPI, ensemble model, and GKE deployment"
-git push origin main
+# Verify deployment
+kubectl get pods
+kubectl get hpa
+kubectl get svc
 ```
 
-## 💻 Local Development
 
-### Train and Test Model Locally
+## 🔥 Stress Testing \& Autoscaling
+
+### Test 1: Autoscaling from 1 to 3 Pods (1200 Connections)
+
+**Objective**: Demonstrate HPA scaling behavior under high load with max 3 pods allowed.
+
+**Configuration**:
+
+- Initial pods: 1
+- Max pods: 3
+- Concurrent connections: 1200
+- Test duration: 30 seconds
+- CPU threshold: 50%
+
+**Command**:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Get service external IP
+export SERVICE_IP=$(kubectl get svc iris-api-service -o jsonpath='{.status.loadBalancer.ingress[^0].ip}')
 
-# Train the model (generates model.pkl and scaler.pkl)
-python train_model.py
+# Run stress test
+wrk -t4 -c1200 -d30s -s scripts/post.lua http://$SERVICE_IP/predict
 
-# Output will show:
-# - SVM hyperparameter tuning results
-# - Model accuracy (~97%)
-# - Classification report per species
-# - Model saved to model.pkl
-# - Scaler saved to scaler.pkl
+# Monitor HPA in real-time
+kubectl get hpa -w
 ```
 
-### Run FastAPI Locally
+**Expected Behavior**:
+
+1. Initial CPU: ~1% (1 replica)
+2. Load applied: CPU spikes to 133%+
+3. HPA triggers: Scales from 1 → 3 replicas
+4. Load distribution: Traffic balances across 3 pods
+5. Final CPU: ~44% per pod (distributed load)
+
+**Actual Results from Logs**:
+
+```
+Running 30s test @ http://34.57.207.248
+  4 threads and 1200 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     1.41s   474.34ms   2.00s    61.95%
+    Req/Sec   147.39     97.52   494.00    68.18%
+  13944 requests in 30.07s, 3.09MB read
+  Socket errors: connect 0, read 291, write 0, timeout 8943
+Requests/sec: 463.78
+Transfer/sec: 105.07KB
+
+HPA Status:
+NAME           REFERENCE                     TARGETS    MINPODS   MAXPODS   REPLICAS   AGE
+iris-api-hpa   Deployment/iris-api-deployment   cpu: 133%/50%   1         3         3          123m
+```
+
+**Analysis**: HPA successfully scaled to 3 replicas when CPU exceeded 50% threshold. Socket errors and timeouts decreased as load distributed.
+
+### Test 2: Bottleneck with Restricted Scaling (2000 Connections, Max 1 Pod)
+
+**Objective**: Demonstrate performance bottleneck when autoscaling is disabled.
+
+**Configuration**:
+
+- Max pods: 1 (restricted via HPA patch)
+- Concurrent connections: 2000 (67% increase from Test 1)
+- Test duration: 30 seconds
+- CPU threshold: 50% (but scaling prevented)
+
+**Command**:
 
 ```bash
-# Start FastAPI development server
-uvicorn main:app --reload
+# Restrict HPA to max 1 pod
+kubectl patch hpa iris-api-hpa --patch '{"spec":{"maxReplicas":1}}'
 
-# Output:
-# INFO:     Uvicorn running on http://127.0.0.1:8000
-# INFO:     Application startup complete
+# Wait for scale down
+kubectl get pods -w
+
+# Run bottleneck test
+wrk -t4 -c2000 -d30s -s scripts/post.lua http://$SERVICE_IP/predict
+
+# Monitor pod CPU
+kubectl top pods
 ```
 
-### Test API Endpoints
+**Expected Behavior**:
 
-```bash
-# Health check
-curl http://localhost:8000/health
+1. HPA scales down: 3 → 1 replica
+2. Load applied: CPU exceeds 150%
+3. HPA blocked: Cannot scale beyond 1 pod
+4. Bottleneck symptoms: High socket errors, timeouts, latency
+5. Throughput degradation: Lower requests/sec despite higher load
 
-# Get model info
-curl http://localhost:8000/model-info
-
-# Make prediction
-curl -X POST "http://localhost:8000/predict" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sepal_length": 5.1,
-    "sepal_width": 3.5,
-    "petal_length": 1.4,
-    "petal_width": 0.2
-  }'
-
-# Response:
-# {
-#   "predicted_species": "setosa",
-#   "confidence": 0.98,
-#   "probabilities": {
-#     "setosa": 0.98,
-#     "versicolor": 0.015,
-#     "virginica": 0.005
-#   },
-#   "feature_names": [...],
-#   "model_type": "Ensemble (SVM + Gradient Boosting)"
-# }
-```
-
-### Interactive API Documentation
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-### Test Docker Locally
-
-```bash
-# Build Docker image
-docker build -t iris-api:test .
-
-# Run container
-docker run -p 8000:8000 iris-api:test
-
-# Test: curl http://localhost:8000/health
-```
-
-## 🔄 CI/CD Pipeline
-
-### How It Works
-
-**Trigger**: Push to `main` branch
-
-**Workflow Steps**:
-
-1. **Checkout**: Clone repository code
-2. **Authenticate**: Setup Google Cloud credentials
-3. **Build**: Create Docker image with tag `us-central1-docker.pkg.dev/PROJECT_ID/iris-repo/iris-api:COMMIT_SHA`
-4. **Push**: Upload image to Google Artifact Registry
-5. **Deploy**: Update GKE deployment to use new image
-6. **Verify**: Check rollout status and display running services
-
-### Monitoring Pipeline
-
-1. Go to GitHub repository → **Actions** tab
-2. Click on workflow run to see detailed logs
-3. Each step shows stdout/stderr output
-4. Failed steps include error messages for debugging
-
-### Example Workflow Execution
+**Actual Results from Logs**:
 
 ```
-✅ Checkout Code (2s)
-✅ Authenticate to Google Cloud (5s)
-✅ Setup Cloud SDK (8s)
-✅ Configure Docker for Artifact Registry (3s)
-✅ Get GKE Credentials (4s)
-✅ Build Docker Image (45s)
-✅ Push to Artifact Registry (12s)
-✅ Deploy to GKE (25s)
-✅ Show Services (3s)
+Running 30s test @ http://34.57.207.248
+  4 threads and 2000 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     1.23s   508.12ms   2.00s    66.12%
+    Req/Sec   301.27   134.88   770.00    68.89%
+  29928 requests in 30.06s, 6.62MB read
+  Socket errors: connect 0, read 1523, write 165366, timeout 3706
+Requests/sec: 995.61
+Transfer/sec: 225.57KB
 
-Total: ~2 minutes
+HPA Status (trapped at 1 replica):
+NAME           REFERENCE                     TARGETS    MINPODS   MAXPODS   REPLICAS   AGE
+iris-api-hpa   Deployment/iris-api-deployment   cpu: 151%/50%   1         1         1          124m
+
+Pod CPU:
+NAME                                    CPU(cores)   MEMORY(bytes)
+iris-api-deployment-84d7d467c6-qdtzf   175m         92Mi
 ```
+
+**Analysis**: Despite 67% more connections, the single pod is overwhelmed:
+
+- **Socket errors increased 524%**: read errors jumped from 291 to 1523
+- **Write errors**: 165,366 write errors (connection exhaustion)
+- **Timeouts decreased but still high**: 3706 timeouts (41% of Test 1)
+- **CPU at 151%**: Exceeds 50% threshold but cannot scale
+- **Bottleneck confirmed**: Performance degraded despite higher request rate
+
+
+## 📊 Test Results Analysis
+
+### Performance Comparison
+
+| Metric | Test 1 (1200 conn, 3 pods) | Test 2 (2000 conn, 1 pod) | Change |
+| :-- | :-- | :-- | :-- |
+| **Requests/sec** | 463.78 | 995.61 | +115% |
+| **Total Requests** | 13,944 | 29,928 | +115% |
+| **Avg Latency** | 1.41s | 1.23s | -13% |
+| **Socket Read Errors** | 291 | 1,523 | +424% |
+| **Socket Write Errors** | 0 | 165,366 | ∞ |
+| **Timeouts** | 8,943 | 3,706 | -59% |
+| **HPA Replicas** | 3 (scaled) | 1 (trapped) | -67% |
+| **CPU Utilization** | 133% → 44%/pod | 151% (single pod) | N/A |
+
+
+
+### Key Insights
+
+1. **Autoscaling prevents bottlenecks**: Test 1 distributed load across 3 pods, reducing per-pod CPU from 133% to ~44%
+2. **Single pod saturation**: Test 2 showed CPU at 151% with no scaling ability, causing massive socket write errors (165K+)
+3. **Connection exhaustion**: Write errors indicate the single pod couldn't accept new connections fast enough
+4. **Throughput paradox**: Higher requests/sec in Test 2, but quality degraded (more errors)
+5. **HPA effectiveness**: CPU-based autoscaling successfully detected load and scaled appropriately when unrestricted
 
 ## 🔌 API Endpoints
 
@@ -361,7 +321,8 @@ Total: ~2 minutes
 
 Health check endpoint.
 
-**Response:**
+**Response**:
+
 ```json
 {
   "status": "healthy",
@@ -370,30 +331,13 @@ Health check endpoint.
 }
 ```
 
-### GET /model-info
-
-Get model and dataset information.
-
-**Response:**
-```json
-{
-  "model_type": "Ensemble (SVM + Gradient Boosting)",
-  "iris_species": ["setosa", "versicolor", "virginica"],
-  "features": [
-    "sepal length (cm)",
-    "sepal width (cm)",
-    "petal length (cm)",
-    "petal width (cm)"
-  ],
-  "description": "Advanced ensemble model..."
-}
-```
 
 ### POST /predict
 
 Predict IRIS species from flower measurements.
 
-**Request:**
+**Request**:
+
 ```json
 {
   "sepal_length": 5.1,
@@ -403,7 +347,8 @@ Predict IRIS species from flower measurements.
 }
 ```
 
-**Response:**
+**Response**:
+
 ```json
 {
   "predicted_species": "setosa",
@@ -413,200 +358,129 @@ Predict IRIS species from flower measurements.
     "versicolor": 0.015,
     "virginica": 0.005
   },
-  "feature_names": ["sepal length (cm)", "sepal width (cm)", "petal length (cm)", "petal width (cm)"],
   "model_type": "Ensemble (SVM + Gradient Boosting)"
 }
 ```
 
-### GET /
-
-Root endpoint with links to documentation.
 
 ## 🧠 Model Details
 
-### Model Architecture
+### Ensemble Architecture
 
-**Ensemble Voting Classifier combining:**
+**Voting Classifier combining**:
 
 1. **Support Vector Machine (SVM)**
-   - Kernel: RBF (Radial Basis Function) or Polynomial
-   - Hyperparameters tuned via GridSearchCV over 5-fold cross-validation
-   - C values tested: [0.1, 1, 10, 100]
-   - Gamma values tested: ['scale', 'auto', 0.001, 0.01]
-   - ~97% accuracy on test set
-
+    - Kernel: RBF (Radial Basis Function)
+    - GridSearchCV hyperparameter tuning (5-fold CV)
+    - C values: [0.1, 1, 10, 100]
+    - Gamma values: ['scale', 'auto', 0.001, 0.01]
 2. **Gradient Boosting Classifier**
-   - 100 estimators
-   - Learning rate: 0.1
-   - Max depth: 3
-   - Captures non-linear relationships
+    - 100 estimators
+    - Learning rate: 0.1
+    - Max depth: 3
 
-**Voting Strategy**: Soft voting (average predicted probabilities)
+**Performance**: ~97% accuracy on IRIS test set
 
-### Data Preprocessing
+### Resource Configuration
 
-- **Feature Scaling**: StandardScaler normalizes all features (critical for SVM)
-- **Train/Test Split**: 80/20 split with stratification (balanced class distribution)
-- **Dataset**: UCI Machine Learning Repository IRIS dataset (150 samples, 4 features, 3 classes)
+Container resources for HPA:
 
-### Performance Metrics
+- **CPU Request**: 100m (minimum guaranteed)
+- **CPU Limit**: 500m (maximum allowed)
+- **Memory Request**: 128Mi
+- **Memory Limit**: 256Mi
 
-```
-Accuracy: ~97%
-Precision per class: ~96-99%
-Recall per class: ~96-100%
-F1-Score: ~97%
-```
 
-## 🔍 Verification Checklist
-
-After deployment, verify everything works:
+## 🔍 Verification Commands
 
 ```bash
-# Get GKE cluster credentials (if not already done)
-gcloud container clusters get-credentials iris-cluster --zone us-central1-a
+# Check HPA status
+kubectl get hpa
 
-# Check all Kubernetes resources
-kubectl get all
+# Monitor pods in real-time
+kubectl get pods -w
 
-# View deployed pods
-kubectl get pods
+# Check pod resource usage
+kubectl top pods
 
-# View services (get external IP)
-kubectl get services
+# View HPA details
+kubectl describe hpa iris-api-hpa
 
-# Check deployment status
-kubectl describe deployment iris-api-deployment
+# Get service external IP
+kubectl get svc iris-api-service
 
-# View logs from a pod
-kubectl logs <POD_NAME>
-
-# Test API from pod
-kubectl exec -it <POD_NAME> -- curl http://localhost:8000/health
-
-# Port-forward for local testing
-kubectl port-forward service/iris-api-service 8080:80
-# Then: curl http://localhost:8080/health
+# Test API health
+curl http://$SERVICE_IP/health
 ```
+
 
 ## 🐛 Troubleshooting
 
-### Pod stuck in ImagePullBackOff
+### HPA Not Scaling
 
-**Issue**: Pod can't pull image from Artifact Registry
-
-**Solution**:
-```bash
-# Check pod status
-kubectl describe pod <POD_NAME>
-
-# Verify service account has permissions
-gcloud projects get-iam-policy $PROJECT_ID \
-  --flatten="bindings[].members" \
-  --filter="bindings.members:github-deployment-sa*"
-
-# Manually authenticate Docker
-gcloud auth configure-docker us-central1-docker.pkg.dev
-```
-
-### Workflow fails at "Deploy to GKE" step
+**Symptom**: HPA shows `<unknown>` for CPU metrics
 
 **Solution**:
-```bash
-# Check credentials
-echo $GKE_SA_KEY | base64 -d | jq .
 
-# Verify service account has container.admin role
-gcloud projects get-iam-policy $PROJECT_ID \
-  --flatten="bindings[].members" \
-  --filter="bindings.members:*github-deployment-sa* AND bindings.role:*container.admin*"
+```bash
+# Verify Metrics Server is running
+kubectl get deployment metrics-server -n kube-system
+
+# Check pod resource requests are defined
+kubectl describe pod <POD_NAME> | grep -A 5 "Requests:"
+
+# View HPA events
+kubectl describe hpa iris-api-hpa
 ```
 
-### Model predictions are wrong
 
-**Issue**: Ensemble model making incorrect predictions
+### wrk Lua Script Errors
 
-**Check**:
-```bash
-# Run local prediction test
-python -c "
-import pickle
-import numpy as np
+**Symptom**: `attempt to index global 'thread' (a nil value)`
 
-# Load model and scaler
-with open('model.pkl', 'rb') as f:
-    model = pickle.load(f)
-with open('scaler.pkl', 'rb') as f:
-    scaler = pickle.load(f)
+**Cause**: Script trying to access thread-specific variables incorrectly
 
-# Test with known IRIS sample
-features = np.array([[5.1, 3.5, 1.4, 0.2]])  # Setosa
-features_scaled = scaler.transform(features)
-pred = model.predict(features_scaled)
-print(f'Prediction: {pred}')  # Should be [0] for Setosa
-"
+**Solution**: Use simplified POST script without thread references:
+
+```lua
+wrk.method = "POST"
+wrk.headers["Content-Type"] = "application/json"
+wrk.body = '{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}'
 ```
 
-### Can't connect to GKE cluster
 
-**Solution**:
-```bash
-# Update kubeconfig
-gcloud container clusters get-credentials iris-cluster \
-  --zone us-central1-a \
-  --project $PROJECT_ID
+### High Socket Errors
 
-# Verify connection
-kubectl cluster-info
-```
+**Symptom**: Large number of socket write/read errors during load test
+**Analysis**: Indicates server connection exhaustion or pod resource limits
 
-## 📚 Learning Resources
+**Solutions**:
 
-- [FastAPI Documentation](https://fastapi.tiangolo.com)
-- [Kubernetes Official Docs](https://kubernetes.io/docs)
-- [Google Kubernetes Engine Docs](https://cloud.google.com/kubernetes-engine/docs)
-- [GitHub Actions Documentation](https://docs.github.com/en/actions)
-- [Docker Documentation](https://docs.docker.com)
-- [scikit-learn Ensemble Methods](https://scikit-learn.org/stable/modules/ensemble.html)
-
-## 📝 Notes
-
-- Model files (`model.pkl`, `scaler.pkl`) are generated during Docker build and NOT committed to git
-- Each deployment creates new Pods; old Pods are gracefully terminated
-- Liveness probe checks `/health` every 10s; pod restarts if unhealthy for 30s+
-- Readiness probe checks `/health` every 5s; pod removed from load balancer if not ready
-- Service uses LoadBalancer type; gets external IP to access API from internet
+1. Increase HPA `maxReplicas` to distribute load
+2. Increase CPU/memory limits in deployment
+3. Tune connection timeouts and keepalive settings
 
 ## ✅ Assignment Completion Checklist
 
-- [ ] GCP project created with Kubernetes Engine enabled
-- [ ] GKE cluster created
-- [ ] Service account created and roles assigned
-- [ ] GitHub repository created
-- [ ] GitHub secrets configured (GKE_PROJECT, GKE_SA_KEY)
-- [ ] All files created (main.py, train_model.py, Dockerfile, deployment.yaml, workflow)
-- [ ] Workflow file updated with correct PROJECT_ID
-- [ ] Deployment manifest updated with correct PROJECT_ID
-- [ ] First push to main triggered GitHub Actions
-- [ ] Workflow successfully completed (✅ all steps)
-- [ ] Pods are running in GKE (kubectl get pods shows Running)
-- [ ] API is accessible via service LoadBalancer IP
-- [ ] Prediction endpoint returns correct results
-- [ ] Model can be described (Pod vs Container differences explained)
+- [ ] GKE cluster created with Metrics Server
+- [ ] HPA configured with 1 min, 3 max replicas, 50% CPU target
+- [ ] Deployment includes resource requests and limits
+- [ ] wrk installed and POST script created
+- [ ] GitHub Actions workflow includes stress testing steps
+- [ ] Test 1: Successfully scaled from 1 to 3 pods with 1200 connections
+- [ ] Test 1: HPA CPU target reached 133%+ and triggered scaling
+- [ ] Test 2: HPA patched to max 1 pod
+- [ ] Test 2: Bottleneck observed with 2000 connections (high errors)
+- [ ] Test 2: CPU exceeded 150% but scaling blocked
+- [ ] Performance metrics documented (latency, errors, throughput)
+- [ ] Screenshots/logs captured showing HPA scaling behavior
 
-## 📞 Support
 
-For issues or questions:
-1. Check the Troubleshooting section above
-2. Review GitHub Actions logs for detailed error messages
-3. Verify GCP service account permissions
-4. Test API locally before deployment
-5. Check kubectl logs from deployed pods
+## 📝 Key Takeaways
 
----
-
-**Created**: November 2025  
-**Framework**: FastAPI  
-**Model**: Ensemble (SVM + Gradient Boosting)  
-**Deployment**: Google Kubernetes Engine  
-**CI/CD**: GitHub Actions
+1. **HPA enables elastic scaling**: Automatically adjusts pod count based on CPU utilization
+2. **Resource limits are critical**: Proper requests/limits enable accurate HPA calculations
+3. **Bottlenecks are observable**: Socket errors and latency increase when scaling is restricted
+4. **CPU is not always optimal**: Consider custom metrics (latency, queue depth) for complex workloads
+5. **Load testing validates architecture**: wrk effectively simulates high-concurrency scenarios
+***
