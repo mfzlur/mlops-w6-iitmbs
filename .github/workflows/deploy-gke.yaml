@@ -44,7 +44,7 @@ jobs:
         tags: |
           us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:latest
----
+
   deploy:
     name: Deploy to GKE
     runs-on: ubuntu-latest
@@ -77,7 +77,7 @@ jobs:
     - name: Deploy Kubernetes Manifests
       run: |
         kubectl apply -f deployment.yaml
----
+
   stress-test:
     name: Stress Test Application
     runs-on: ubuntu-latest
