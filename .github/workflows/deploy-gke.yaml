@@ -227,4 +227,3 @@ jobs:
         kubectl patch hpa iris-api-hpa --patch '{"spec":{"maxReplicas":3}}'
         echo "--- Final HPA status: ---"
         kubectl get hpa iris-api-hpa
-a
