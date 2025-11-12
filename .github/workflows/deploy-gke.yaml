@@ -133,12 +133,17 @@ jobs:
 
     - name: TEST 1  AUTOSCALING DEMO (1000 connections)
       run: |
+
         echo "--- Test 1: Running >1000 connections with max 3 pods ---"
+        echo "--- HPA status before test (expect 1 replica): ---"
         kubectl get hpa iris-api-hpa
-        
+      
+        echo "--- Applying 1200-connection load for 30s... ---"
         wrk -t4 -c1200 -d30s -s ./scripts/post.lua http://${{ env.SERVICE_IP }}
-        
+      
+        echo "--- Load test finished. ---"
         echo "--- Test 1 finished. Waiting for HPA to scale to 3 replicas... ---"
+        
         REPLICAS=0
         TIMEOUT_SECONDS=240 # 4 minutes
         START_TIME=$SECONDS
@@ -157,43 +162,65 @@ jobs:
           REPLICAS=$(kubectl get hpa iris-api-hpa -o jsonpath='{.status.currentReplicas}' 2>/dev/null || echo 0)
           [ "$REPLICAS" -lt 3 ] && echo "Current replicas: $REPLICAS. Waiting..." && sleep 10
         done
-        
+      
         echo "--- HPA scaled to 3 replicas. ---"
+        echo "--- Final HPA status (expect 3 replicas): ---"
         kubectl get hpa iris-api-hpa
+      
+        echo "--- Final pod status and CPU load (expect 3 pods, load distributed): ---"
         kubectl get pods -l app=iris-api -o wide
+        kubectl top pods -l app=iris-api
         
-    - name: TEST 2 BOTTLENECK DEMO (2000 connections)
-      run: |
-        echo "---  Test 2: Restricting to 1 pod, running 2000 connections ---"
-        kubectl patch hpa iris-api-hpa --patch '{"spec":{"maxReplicas":1}}'
         
-        echo "--- Waiting for pods to scale down to 1... ---"
-        REPLICAS=99 # Set to a non-1 value
-        TIMEOUT_SECONDS=240 # 4 minutes
-        START_TIME=$SECONDS
-        
-        while [ "$REPLICAS" -ne 1 ]; do
-          CURRENT_TIME=$SECONDS
-          ELAPSED=$((CURRENT_TIME - START_TIME))
-
-          if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
-            echo "--- TIMEOUT: Pods did not scale down to 1 in 4 minutes. ---"
-            kubectl get pods -l app=iris-api
-            exit 1 # Fail the job
-          fi
-
-          # Get count of pods that are not Terminating
-          REPLICAS=$(kubectl get pods -l app=iris-api --no-headers 2>/dev/null | grep -c -v "Terminating" || echo 0)
-          [ "$REPLICAS" -ne 1 ] && echo "Current pod count: $REPLICAS. Waiting..." && sleep 10
-        done
-        
-        echo "--- Pod count is 1. Starting bottleneck test. ---"
-        kubectl get pods -l app=iris-api
-        
-        wrk -t4 -c2000 -d30s -s ./scripts/post.lua http://${{ env.SERVICE_IP }}
-        
-        echo "--- Test 2 finished. ---"
-        kubectl get hpa iris-api-hpa
+        - name: TEST 2 BOTTLENECK DEMO (2000 connections)
+        run: |
+          echo "---  Test 2: Restricting to 1 pod, running 2000 connections ---"
+          echo "--- HPA status BEFORE patch (expect max 3): ---"
+          kubectl get hpa iris-api-hpa
+          
+          # This is the key command to restrict scaling
+          kubectl patch hpa iris-api-hpa --patch '{"spec":{"maxReplicas":1}}'
+          echo "--- HPA status AFTER patch (expect max 1): ---"
+          kubectl get hpa iris-api-hpa
+          
+          echo "--- Waiting for pods to scale down to 1... ---"
+          REPLICAS=99 # Set to a non-1 value
+          TIMEOUT_SECONDS=240 # 4 minutes
+          START_TIME=$SECONDS
+          
+          while [ "$REPLICAS" -ne 1 ]; do
+            CURRENT_TIME=$SECONDS
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+  
+            if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
+              echo "--- TIMEOUT: Pods did not scale down to 1 in 4 minutes. ---"
+              kubectl get pods -l app=iris-api
+              exit 1 # Fail the job
+            fi
+  
+            # Get count of pods that are not Terminating
+            REPLICAS=$(kubectl get pods -l app=iris-api --no-headers 2>/dev/null | grep -c -v "Terminating" || echo 0)
+            [ "$REPLICAS" -ne 1 ] && echo "Current pod count: $REPLICAS. Waiting..." && sleep 10
+          done
+          
+          echo "--- Pod count is 1. Starting bottleneck test with 2000 connections... ---"
+          kubectl get pods -l app=iris-api
+          
+          # Give pod a moment to settle after scaling down
+          sleep 5 
+          
+          # Apply the heavy load
+          wrk -t4 -c2000 -d30s -s ./scripts/post.lua http://${{ env.SERVICE_IP }}
+          
+          echo "--- Bottleneck test finished. ---"
+          echo "*** NOTE: Check 'wrk' output above for high Socket/Timeout errors. This is the bottleneck symptom. ***"
+          
+          echo "--- CPU load of the single pod (expect CPU to be very high): ---"
+          kubectl top pods -l app=iris-api
+          
+          echo "--- Final HPA status (expect 1/1 replicas, but very high target %): ---"
+          kubectl get hpa iris-api-hpa
+          echo "*** SUCCESS: HPA shows high CPU target but is 'trapped' at 1 replica. Bottleneck proven. ***"
 
     - name: Clean Up - Reset HPA
       if: always() # This ensures it runs even if TEST 2 fails
