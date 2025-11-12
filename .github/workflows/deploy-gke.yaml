@@ -6,17 +6,16 @@ on:
       - main
 
 env:
-  PROJECT_ID: mlops-coursework # Change this
-  REPO_NAME: mlops-w6-repo # Change this
-  CLUSTER_NAME: your-cluster-name # Change this
-  CLUSTER_ZONE: us-central1-c # Change this
+  PROJECT_ID: ${{ secrets.GKE_PROJECT }}
+  REPO_NAME: 'mlops-w6-repo'       # <-- Make sure this is your Artifact Registry repo name
+  CLUSTER_NAME: 'week6-mlops-iitmbs'  # <-- !!! CHANGE THIS to your GKE cluster name
+  CLUSTER_ZONE: us-central1        # <-- Make sure this is your cluster's zone
   IMAGE_NAME: iris-api
 
 jobs:
   build:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -28,8 +27,7 @@ jobs:
     - name: Authenticate to Google Cloud
       uses: 'google-github-actions/auth@v2'
       with:
-        workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL/providers/YOUR_PROVIDER'
-        service_account: 'YOUR_SERVICE_ACCOUNT_EMAIL'
+        credentials_json: '${{ secrets.GKE_SA_KEY }}'
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -46,7 +44,7 @@ jobs:
         tags: |
           us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:latest
-
+---
   deploy:
     name: Deploy to GKE
     runs-on: ubuntu-latest
@@ -62,8 +60,7 @@ jobs:
     - name: Authenticate to Google Cloud
       uses: 'google-github-actions/auth@v2'
       with:
-        workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL/providers/YOUR_PROVIDER'
-        service_account: 'YOUR_SERVICE_ACCOUNT_EMAIL'
+        credentials_json: '${{ secrets.GKE_SA_KEY }}'
 
     - name: Get GKE credentials
       uses: 'google-github-actions/get-gke-credentials@v2'
@@ -73,16 +70,18 @@ jobs:
 
     - name: Update Image Tag in Deployment
       run: |
-        sed -i "s|image: us-central1-docker.pkg.dev/mlops-coursework/mlops-w6-repo/iris-api:latest|image: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" deployment.yaml
+        # This command finds the 'latest' image tag in your deployment.yaml and replaces it
+        # with the specific commit SHA, ensuring the new code is deployed.
+        sed -i "s|image: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:latest|image: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" deployment.yaml
 
     - name: Deploy Kubernetes Manifests
       run: |
         kubectl apply -f deployment.yaml
-
+---
   stress-test:
     name: Stress Test Application
     runs-on: ubuntu-latest
-    needs: deploy # Runs after the deploy job is successful
+    needs: deploy
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -94,8 +93,7 @@ jobs:
     - name: Authenticate to Google Cloud
       uses: 'google-github-actions/auth@v2'
       with:
-        workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL/providers/YOUR_PROVIDER'
-        service_account: 'YOUR_SERVICE_ACCOUNT_EMAIL'
+        credentials_json: '${{ secrets.GKE_SA_KEY }}'
 
     - name: Get GKE credentials
       uses: 'google-github-actions/get-gke-credentials@v2'
@@ -111,11 +109,22 @@ jobs:
     - name: Get Service External IP
       run: |
         echo "--- Waiting for external IP..."
-        SERVICE_NAME="iris-api-service" # <-- This matches your service name
-        
+        SERVICE_NAME="iris-api-service"
         IP=""
+        TIMEOUT_SECONDS=300 # 5 minutes
+        START_TIME=$SECONDS
+        
         while [ -z "$IP" ]; do
-          IP=$(kubectl get service $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          CURRENT_TIME=$SECONDS
+          ELAPSED=$((CURRENT_TIME - START_TIME))
+          
+          if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
+            echo "--- TIMEOUT: Failed to get external IP in 5 minutes. ---"
+            kubectl get service $SERVICE_NAME
+            exit 1
+          fi
+
+          IP=$(kubectl get service $SERVICE_NAME -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
           [ -z "$IP" ] && echo "Waiting for IP..." && sleep 10
         done
         
@@ -125,35 +134,71 @@ jobs:
     - name: TEST 1  AUTOSCALING DEMO (1000 connections)
       run: |
         echo "--- Test 1: Running >1000 connections with max 3 pods ---"
-        echo "--- HPA status before test: ---"
         kubectl get hpa iris-api-hpa
         
-        # We use 1200 connections to satisfy the >1000 requirement
         wrk -t4 -c1200 -d30s -s ./scripts/post.lua http://${{ env.SERVICE_IP }}
         
-        echo "--- Test 1 finished. Waiting 90s for HPA to react... ---"
-        sleep 90 
+        echo "--- Test 1 finished. Waiting for HPA to scale to 3 replicas... ---"
+        REPLICAS=0
+        TIMEOUT_SECONDS=240 # 4 minutes
+        START_TIME=$SECONDS
         
-        echo "--- HPA status after test: ---"
+        while [ "$REPLICAS" -lt 3 ]; do
+          CURRENT_TIME=$SECONDS
+          ELAPSED=$((CURRENT_TIME - START_TIME))
+          
+          if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
+            echo "--- TIMEOUT: HPA did not scale to 3 replicas in 4 minutes. ---"
+            kubectl get hpa iris-api-hpa
+            kubectl get pods -l app=iris-api -o wide
+            exit 1 # Fail the job
+          fi
+          
+          REPLICAS=$(kubectl get hpa iris-api-hpa -o jsonpath='{.status.currentReplicas}' 2>/dev/null || echo 0)
+          [ "$REPLICAS" -lt 3 ] && echo "Current replicas: $REPLICAS. Waiting..." && sleep 10
+        done
+        
+        echo "--- HPA scaled to 3 replicas. ---"
         kubectl get hpa iris-api-hpa
-        echo "--- Pod status (should be scaling/scaled to 3): ---"
         kubectl get pods -l app=iris-api -o wide
         
     - name: TEST 2 BOTTLENECK DEMO (2000 connections)
       run: |
         echo "---  Test 2: Restricting to 1 pod, running 2000 connections ---"
-        # Patch the HPA to restrict scaling to 1 pod
         kubectl patch hpa iris-api-hpa --patch '{"spec":{"maxReplicas":1}}'
         
-        echo "--- Waiting 60s for pods to scale down... ---"
-        sleep 60
+        echo "--- Waiting for pods to scale down to 1... ---"
+        REPLICAS=99 # Set to a non-1 value
+        TIMEOUT_SECONDS=240 # 4 minutes
+        START_TIME=$SECONDS
         
-        echo "--- Pod status before test (should be 1): ---"
+        while [ "$REPLICAS" -ne 1 ]; do
+          CURRENT_TIME=$SECONDS
+          ELAPSED=$((CURRENT_TIME - START_TIME))
+
+          if [ $ELAPSED -gt $TIMEOUT_SECONDS ]; then
+            echo "--- TIMEOUT: Pods did not scale down to 1 in 4 minutes. ---"
+            kubectl get pods -l app=iris-api
+            exit 1 # Fail the job
+          fi
+
+          # Get count of pods that are not Terminating
+          REPLICAS=$(kubectl get pods -l app=iris-api --no-headers 2>/dev/null | grep -c -v "Terminating" || echo 0)
+          [ "$REPLICAS" -ne 1 ] && echo "Current pod count: $REPLICAS. Waiting..." && sleep 10
+        done
+        
+        echo "--- Pod count is 1. Starting bottleneck test. ---"
         kubectl get pods -l app=iris-api
         
-        # This test will likely produce many errors, proving the bottleneck
         wrk -t4 -c2000 -d30s -s ./scripts/post.lua http://${{ env.SERVICE_IP }}
         
         echo "--- Test 2 finished. ---"
-        echo "--- HPA status (should show 1/1 replicas, but high target %): ---"
+        kubectl get hpa iris-api-hpa
+
+    - name: Clean Up - Reset HPA
+      if: always() # This ensures it runs even if TEST 2 fails
+      run: |
+        echo "--- Resetting HPA maxReplicas to 3 ---"
+        kubectl patch hpa iris-api-hpa --patch '{"spec":{"maxReplicas":3}}'
+        echo "--- Final HPA status: ---"
         kubectl get hpa iris-api-hpa
